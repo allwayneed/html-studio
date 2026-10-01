@@ -242,7 +242,7 @@ function buildFullDoc() {
   if (/<\/head>/i.test(h)) out = out.replace(/<\/head>/i, styleTag + "\n</head>");
   else out = out + styleTag;
   if (j.trim()) {
-    const jsTag = "<script>\n" + j + "\n<\/script>";
+    const jsTag = "<scr" + "ipt>\n" + j + "\n<\/scr" + "ipt>";
     if (/<\/body>/i.test(h)) out = out.replace(/<\/body>/i, jsTag + "\n</body>");
     else out = out + jsTag;
   }
@@ -553,7 +553,7 @@ function runScan() {
     const text = texts[rule.tab];
     if (!text) continue;
     text.split("\n").forEach((line, i) => {
-      if (/^\s*(\/\/|\/\*|\*|<!--)/.test(line)) return;
+      if (/^\s*(\/\/|\/\*|\*|<\x21--)/.test(line)) return;
       if (rule.re.test(line)) issues.push({ tab: rule.tab, sev: rule.sev, title: rule.title, desc: rule.desc, fix: rule.fix, line: i + 1 });
     });
   }
