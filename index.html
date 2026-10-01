@@ -113,6 +113,41 @@
         <option value="">（変更しない）</option>
         <option>center</option><option>flex-start</option><option>flex-end</option><option>stretch</option>
       </select>
+      <label>アニメーション</label>
+      <select id="insAnim">
+        <option value="">なし</option>
+        <option value="fadeIn">フェードイン</option>
+        <option value="slideUp">スライドイン</option>
+        <option value="bounce">バウンド</option>
+        <option value="pulse">パルス</option>
+        <option value="rotate">回転</option>
+        <option value="shake">シェイク</option>
+        <option value="float">ふわふわ</option>
+      </select>
+      <div class="row">
+        <div><label>時間(秒)</label><input id="insAnimDur" type="number" value="1" step="0.1"></div>
+        <div><label>繰返し</label>
+          <select id="insAnimIter"><option>1</option><option>2</option><option>3</option><option value="infinite">∞</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>遅延(秒)</label><input id="insAnimDelay" type="number" value="0" step="0.1"></div>
+        <div><label>イージング</label>
+          <select id="insAnimEase"><option>ease</option><option>linear</option><option>ease-in</option><option>ease-out</option><option>ease-in-out</option></select></div>
+      </div>
+      <label>要素の追加</label>
+      <select id="newTag">
+        <option value="div">div</option><option value="p">p</option><option value="h2">h2</option>
+        <option value="h3">h3</option><option value="button">button</option>
+        <option value="img">img</option><option value="ul">ul（li×3）</option>
+      </select>
+      <div class="row" style="margin-top:6px">
+        <div><button class="btn" id="btnAddChild">＋ 中に追加</button></div>
+        <div><button class="btn" id="btnAddAfter">＋ 後ろに追加</button></div>
+      </div>
+      <div class="row">
+        <div><button class="btn" id="btnDup">複製</button></div>
+        <div><button class="btn danger" id="btnDel">削除</button></div>
+      </div>
       <button class="btn primary" id="btnApplySrc">↑ ソースへ反映して戻る</button>
       <button class="btn" id="btnDeselect">選択解除</button>
     </div>
@@ -289,6 +324,14 @@ function select(el) {
   $("#insDisp").value = el.style.display || "";
   $("#insJc").value = el.style.justifyContent || "";
   $("#insAi").value = el.style.alignItems || "";
+  const animName = (el.style.animationName || "").trim();
+  $("#insAnim").value = ANIM_PRESETS[animName] ? animName : "";
+  if (animName && ANIM_PRESETS[animName]) {
+    $("#insAnimDur").value = parseFloat(el.style.animationDuration) || 1;
+    $("#insAnimDelay").value = parseFloat(el.style.animationDelay) || 0;
+    $("#insAnimIter").value = el.style.animationIterationCount || "1";
+    $("#insAnimEase").value = el.style.animationTimingFunction || "ease";
+  }
   $("#inspector").style.display = "block";
 }
 function rgbToHex(rgb) {
@@ -333,6 +376,12 @@ $("#btnApplySrc").addEventListener("click", () => {
   } else {
     edHtml.value = newBody;
   }
+  /* アニメーションのkeyframesをCSSタブに書き足す（インラインstyleはanimation指定のみでkeyframesは持てないため） */
+  for (const name of usedAnims) {
+    if (!edCss.value.includes("@keyframes " + name)) {
+      edCss.value = edCss.value.trimEnd() + "\n" + ANIM_PRESETS[name] + "\n";
+    }
+  }
   save();
   exitGui();
   refresh();
@@ -346,6 +395,89 @@ function exitGui() {
   selected = null; guiDoc = null;
   refresh();
 }
+
+/* ================= アニメーション（GUI） ================= */
+const ANIM_PRESETS = {
+  fadeIn:  "@keyframes fadeIn{from{opacity:0}to{opacity:1}}",
+  slideUp: "@keyframes slideUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:none}}",
+  bounce:  "@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-18px)}}",
+  pulse:   "@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}",
+  rotate:  "@keyframes rotate{from{transform:rotate(0)}to{transform:rotate(360deg)}}",
+  shake:   "@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}",
+  float:   "@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}"
+};
+const usedAnims = new Set();
+
+function injectKeyframes() {
+  if (!guiDoc) return;
+  let st = guiDoc.getElementById("__anim_kf");
+  if (!st) { st = guiDoc.createElement("style"); st.id = "__anim_kf"; guiDoc.head.appendChild(st); }
+  st.textContent = [...usedAnims].map(n => ANIM_PRESETS[n]).join("\n");
+}
+function applyAnim() {
+  if (!selected) return;
+  const name = $("#insAnim").value;
+  if (!name) { selected.style.removeProperty("animation"); return; }
+  usedAnims.add(name);
+  injectKeyframes();
+  const dur = parseFloat($("#insAnimDur").value) || 1;
+  const delay = parseFloat($("#insAnimDelay").value) || 0;
+  const iter = $("#insAnimIter").value;
+  const ease = $("#insAnimEase").value;
+  /* 再生を最初からやり直す: 一旦解除→強制再描画→再設定 */
+  selected.style.animation = "none";
+  void selected.offsetWidth;
+  selected.style.animation = name + " " + dur + "s " + ease + " " + delay + "s " + iter;
+}
+["#insAnim","#insAnimDur","#insAnimDelay","#insAnimIter","#insAnimEase"].forEach(s =>
+  $(s).addEventListener("input", applyAnim));
+
+/* ================= 要素の追加・複製・削除（GUI） ================= */
+const DEFAULT_TEXT = { div:"新しいボックス", p:"新しい段落", h2:"見出し2", h3:"見出し3", button:"ボタン" };
+function makeNewElement(tag) {
+  let el;
+  if (tag === "ul") {
+    el = guiDoc.createElement("ul");
+    for (let i = 1; i <= 3; i++) { const li = guiDoc.createElement("li"); li.textContent = "項目" + i; el.appendChild(li); }
+  } else if (tag === "img") {
+    el = guiDoc.createElement("img");
+    el.src = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="140"><rect width="200" height="140" fill="#cfd6de"/><text x="100" y="78" text-anchor="middle" font-family="sans-serif" fill="#555" font-size="14">画像</text></svg>');
+    el.alt = "画像";
+    el.style.maxWidth = "100%";
+  } else {
+    el = guiDoc.createElement(tag);
+    el.textContent = DEFAULT_TEXT[tag] || "新しい要素";
+  }
+  el.style.outline = "2px dashed #4f9cf9";
+  setTimeout(() => { if (el) el.style.removeProperty("outline"); }, 2000);
+  return el;
+}
+$("#btnAddChild").addEventListener("click", () => {
+  if (!selected) return;
+  const el = makeNewElement($("#newTag").value);
+  selected.appendChild(el);
+  select(el);
+});
+$("#btnAddAfter").addEventListener("click", () => {
+  if (!selected) return;
+  const el = makeNewElement($("#newTag").value);
+  if (selected === guiDoc.body) guiDoc.body.appendChild(el);
+  else selected.parentNode.insertBefore(el, selected.nextSibling);
+  select(el);
+});
+$("#btnDup").addEventListener("click", () => {
+  if (!selected || selected === guiDoc.body) return;
+  const c = selected.cloneNode(true);
+  c.classList.remove("__enc_selected");
+  selected.parentNode.insertBefore(c, selected.nextSibling);
+});
+$("#btnDel").addEventListener("click", () => {
+  if (!selected) return;
+  if (selected === guiDoc.body || selected === guiDoc.documentElement || selected === guiDoc.head) { alert("その要素は削除できません"); return; }
+  selected.remove();
+  selected = null;
+  $("#inspector").style.display = "none";
+});
 
 /* ================= XSS自動検査 ================= */
 const RULES = [
