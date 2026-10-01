@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTML Studio — GUI編集 & XSS検査つきサイトビルダー</title>
+<style>
+  :root{
+    --bg:#0f1317; --panel:#171c22; --panel2:#1e242c; --line:#2b333d;
+    --text:#e8ecef; --sub:#93a0ab; --acc:#4f9cf9;
+    --ok:#4cc47e; --warn:#e6b450; --bad:#e06060;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:15px;margin:0 12px 0 0;color:var(--acc);white-space:nowrap}
+  .btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer}
+  .btn:hover{border-color:var(--acc)}
+  .btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  .btn.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+  .btn.danger{border-color:var(--bad);color:var(--bad)}
+  main{flex:1;display:grid;grid-template-columns:1fr 1fr;min-height:0}
+  .pane{display:flex;flex-direction:column;min-width:0;min-height:0}
+  .pane + .pane{border-left:1px solid var(--line)}
+  .tabs{display:flex;background:var(--panel);border-bottom:1px solid var(--line)}
+  .tab{padding:8px 16px;font-size:13px;cursor:pointer;color:var(--sub);border-bottom:2px solid transparent}
+  .tab.active{color:var(--text);border-bottom-color:var(--acc)}
+  textarea{flex:1;width:100%;background:var(--bg);color:var(--text);border:none;resize:none;padding:12px;font-family:"JetBrains Mono",Consolas,monospace;font-size:13px;line-height:1.55;outline:none;white-space:pre;overflow:auto}
+  .preview-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;color:var(--sub)}
+  iframe{flex:1;width:100%;border:none;background:#fff;min-height:0}
+  #inspector{position:absolute;top:44px;right:12px;width:300px;max-height:calc(100% - 70px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;display:none;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:13px;z-index:20}
+  #inspector h3{margin:0 0 8px;font-size:13px;color:var(--acc)}
+  #inspector label{display:block;margin:8px 0 3px;color:var(--sub);font-size:12px}
+  #inspector input,#inspector select,#inspector textarea{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:5px;color:var(--text);padding:5px 7px;font-size:13px}
+  #inspector .row{display:flex;gap:6px}
+  #inspector .row > div{flex:1}
+  #inspector .btn{width:100%;margin-top:10px;text-align:center}
+  #scanPanel{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50}
+  #scanPanel .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(720px,92vw);max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+  #scanPanel .head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+  #scanPanel .head h2{margin:0;font-size:16px;flex:1}
+  #scanBody{overflow:auto;padding:14px 18px}
+  .sev{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-right:8px}
+  .sev.high{background:rgba(224,96,96,.18);color:var(--bad)}
+  .sev.mid{background:rgba(230,180,80,.18);color:var(--warn)}
+  .sev.low{background:rgba(76,196,126,.15);color:var(--ok)}
+  .issue{padding:10px 0;border-bottom:1px solid var(--line)}
+  .issue:last-child{border-bottom:none}
+  .issue .loc{color:var(--sub);font-size:12px;font-family:monospace}
+  .issue .title{font-weight:600;margin:3px 0 2px}
+  .issue .desc{color:var(--sub);font-size:12.5px;line-height:1.6}
+  .issue .fix{color:var(--ok);font-size:12.5px;margin-top:2px}
+  .summary{display:flex;gap:12px;font-size:13px;margin-bottom:10px}
+  .summary b{font-size:20px}
+  #scanBody pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;overflow:auto}
+  .clean{color:var(--ok);font-size:15px;padding:20px 0;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>HTML Studio</h1>
+  <button class="btn primary" id="btnRefresh">▶ 更新</button>
+  <button class="btn" id="btnGui">🖱 GUI編集</button>
+  <button class="btn danger" id="btnScan">🛡 XSS検査</button>
+  <button class="btn" id="btnExport">⬇ 単一HTMLで保存</button>
+  <button class="btn" id="btnReset">雛形に戻す</button>
+  <span id="status" style="margin-left:auto;font-size:12px;color:var(--sub)"></span>
+</header>
+<main>
+  <section class="pane" style="position:relative">
+    <div class="tabs">
+      <div class="tab active" data-tab="html">HTML</div>
+      <div class="tab" data-tab="css">CSS</div>
+      <div class="tab" data-tab="js">JS</div>
+    </div>
+    <textarea id="edHtml" spellcheck="false"></textarea>
+    <textarea id="edCss" spellcheck="false" style="display:none"></textarea>
+    <textarea id="edJs" spellcheck="false" style="display:none"></textarea>
+    <div id="inspector">
+      <h3 id="insTag">—</h3>
+      <label>ID</label><input id="insId">
+      <label>class</label><input id="insClass">
+      <label>テキスト内容</label><textarea id="insText" rows="2"></textarea>
+      <div class="row">
+        <div><label>文字色</label><input id="insColor" placeholder="#333"></div>
+        <div><label>背景色</label><input id="insBg" placeholder="#fff"></div>
+      </div>
+      <div class="row">
+        <div><label>font-size(px)</label><input id="insFs" type="number" placeholder="16"></div>
+        <div><label>gap(px)</label><input id="insGap" type="number" placeholder="8"></div>
+      </div>
+      <div class="row">
+        <div><label>padding(px)</label><input id="insPad" type="number"></div>
+        <div><label>border-radius(px)</label><input id="insRad" type="number"></div>
+      </div>
+      <div class="row">
+        <div><label>width(px)</label><input id="insW" placeholder="auto"></div>
+        <div><label>height(px)</label><input id="insH" placeholder="auto"></div>
+      </div>
+      <label>display</label>
+      <select id="insDisp">
+        <option value="">（変更しない）</option>
+        <option>block</option><option>flex</option><option>grid</option><option>inline-block</option><option>none</option>
+      </select>
+      <label>justify-content（flex/grid時）</label>
+      <select id="insJc">
+        <option value="">（変更しない）</option>
+        <option>center</option><option>space-between</option><option>space-around</option><option>flex-start</option><option>flex-end</option>
+      </select>
+      <label>align-items</label>
+      <select id="insAi">
+        <option value="">（変更しない）</option>
+        <option>center</option><option>flex-start</option><option>flex-end</option><option>stretch</option>
+      </select>
+      <button class="btn primary" id="btnApplySrc">↑ ソースへ反映して戻る</button>
+      <button class="btn" id="btnDeselect">選択解除</button>
+    </div>
+  </section>
+  <section class="pane" style="position:relative">
+    <div class="preview-bar">
+      <span id="pvMode">プレビュー（スクリプト実行あり・サンドボックス）</span>
+      <span id="pvStatus" style="margin-left:auto"></span>
+    </div>
+    <iframe id="preview"></iframe>
+  </section>
+</main>
+<div id="scanPanel">
+  <div class="card">
+    <div class="head">
+      <h2>🛡 XSS自動検査レポート</h2>
+      <button class="btn" id="btnScanClose">閉じる</button>
+    </div>
+    <div id="scanBody"></div>
+  </div>
+</div>
+<script>
+"use strict";
+/* ================= 基本要素 ================= */
+const $ = s => document.querySelector(s);
+const edHtml = $("#edHtml"), edCss = $("#edCss"), edJs = $("#edJs");
+const iframe = $("#preview");
+const editors = { html: edHtml, css: edCss, js: edJs };
+let guiMode = false, guiDoc = null, selected = null;
+
+const TEMPLATE_HTML = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>My Site</title>
+</head>
+<body>
+  <header>
+    <h1>こんにちは、世界</h1>
+    <p>GUI編集ボタンを押して、要素をクリックしてみて</p>
+  </header>
+  <main class="cards">
+    <div class="card">カードA</div>
+    <div class="card">カードB</div>
+    <div class="card">カードC</div>
+  </main>
+  <footer><p>© 2026</p></footer>
+</body>
+</html>`;
+const TEMPLATE_CSS = `body{font-family:system-ui,sans-serif;margin:0;background:#f5f6f8;color:#222}
+header{padding:40px 20px;text-align:center;background:#4f9cf9;color:#fff}
+main{display:flex;gap:14px;padding:28px;justify-content:center}
+.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:24px 32px;cursor:pointer;transition:.25s}
+.card:hover{transform:translateY(-4px);box-shadow:0 6px 18px rgba(0,0,0,.12)}
+footer{text-align:center;color:#999;padding:18px;font-size:13px}`;
+const TEMPLATE_JS = `document.querySelectorAll(".card").forEach(c => {
+  c.addEventListener("click", () => {
+    c.textContent = "クリックされた!";
+  });
+});`;
+
+/* ================= タブ ================= */
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  Object.values(editors).forEach(e => e.style.display = "none");
+  editors[t.dataset.tab].style.display = "block";
+  editors[t.dataset.tab].focus();
+}));
+
+/* ================= 保存・復元 ================= */
+const LS_KEY = "html-studio-doc-v1";
+function save() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify({ h: edHtml.value, c: edCss.value, j: edJs.value })); } catch(e){}
+}
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(LS_KEY));
+    if (d && d.h) { edHtml.value = d.h; edCss.value = d.c || ""; edJs.value = d.j || ""; return true; }
+  } catch(e){}
+  return false;
+}
+if (!load()) { edHtml.value = TEMPLATE_HTML; edCss.value = TEMPLATE_CSS; edJs.value = TEMPLATE_JS; }
+
+/* ================= 結合とプレビュー ================= */
+function buildFullDoc() {
+  let h = edHtml.value, c = edCss.value, j = edJs.value.replace(/<\/script>/gi, "<\\/script>");
+  let out = h;
+  const styleTag = "<style>\n" + c + "\n</style>";
+  if (/<\/head>/i.test(h)) out = out.replace(/<\/head>/i, styleTag + "\n</head>");
+  else out = out + styleTag;
+  if (j.trim()) {
+    const jsTag = "<script>\n" + j + "\n<\/script>";
+    if (/<\/body>/i.test(h)) out = out.replace(/<\/body>/i, jsTag + "\n</body>");
+    else out = out + jsTag;
+  }
+  return out;
+}
+/* GUIモード用: スクリプトとインラインハンドラを無害化（GUI編集は純粋なDOM操作だけにするため） */
+function buildSanitizedDoc() {
+  let h = edHtml.value
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  const styleTag = "<style>\n" + edCss.value + "\n</style>";
+  if (/<\/head>/i.test(h)) h = h.replace(/<\/head>/i, styleTag + "\n</head>");
+  else h = h + styleTag;
+  return h;
+}
+
+let debounceId = null;
+function scheduleRefresh() {
+  clearTimeout(debounceId);
+  debounceId = setTimeout(refresh, 600);
+  setStatus("自動更新: 待機中…");
+}
+function refresh() {
+  if (guiMode) return;
+  iframe.sandbox = "allow-scripts";
+  iframe.srcdoc = buildFullDoc();
+  setStatus("");
+}
+function setStatus(msg) { $("#pvStatus").textContent = msg; }
+
+[edHtml, edCss, edJs].forEach(e => e.addEventListener("input", () => { save(); scheduleRefresh(); }));
+$("#btnRefresh").addEventListener("click", refresh);
+refresh();
+
+/* ================= GUI編集モード ================= */
+$("#btnGui").addEventListener("click", () => guiMode ? exitGui() : enterGui());
+
+function enterGui() {
+  guiMode = true;
+  $("#btnGui").classList.add("on");
+  $("#pvMode").textContent = "GUI編集（スクリプト無効・クリックで要素選択）";
+  iframe.removeAttribute("sandbox");
+  iframe.srcdoc = buildSanitizedDoc();
+  iframe.addEventListener("load", guiReady);
+  setStatus("GUI編集モード: プレビュー内の要素をクリック");
+}
+function guiReady() {
+  guiDoc = iframe.contentDocument;
+  if (!guiDoc) return;
+  const st = guiDoc.createElement("style");
+  st.textContent = `body *{cursor:pointer !important}
+    body :hover{outline:2px solid #4f9cf9 !important;outline-offset:1px}
+    .__enc_selected{outline:3px solid #e06060 !important;outline-offset:1px}`;
+  guiDoc.head.appendChild(st);
+  guiDoc.addEventListener("click", e => {
+    e.preventDefault();
+    const el = e.target;
+    if (!el || !el.tagName) return;
+    select(el);
+  }, true);
+}
+function select(el) {
+  if (selected && selected.classList) selected.classList.remove("__enc_selected");
+  selected = el;
+  el.classList.add("__enc_selected");
+  const cs = guiDoc.defaultView.getComputedStyle(el);
+  $("#insTag").textContent = "<" + el.tagName.toLowerCase() + (el.id ? " #" + el.id : "") + ">";
+  $("#insId").value = el.id || "";
+  $("#insClass").value = el.className.replace("__enc_selected","").trim();
+  const textOnly = el.children.length === 0;
+  $("#insText").value = textOnly ? el.textContent : "";
+  $("#insText").disabled = !textOnly;
+  $("#insColor").value = rgbToHex(cs.color) || "";
+  $("#insBg").value = rgbToHex(cs.backgroundColor) || "";
+  $("#insFs").value = parseFloat(cs.fontSize) || "";
+  $("#insGap").value = parseFloat(cs.gap) || "";
+  $("#insPad").value = parseFloat(cs.padding) || "";
+  $("#insRad").value = parseFloat(cs.borderRadius) || "";
+  $("#insW").value = el.style.width.replace("px","");
+  $("#insH").value = el.style.height.replace("px","");
+  $("#insDisp").value = el.style.display || "";
+  $("#insJc").value = el.style.justifyContent || "";
+  $("#insAi").value = el.style.alignItems || "";
+  $("#inspector").style.display = "block";
+}
+function rgbToHex(rgb) {
+  if (!rgb || rgb === "rgba(0, 0, 0, 0)" || !rgb.startsWith("rgb")) return "";
+  const m = rgb.match(/\d+/g); if (!m) return "";
+  return "#" + m.slice(0,3).map(n => (+n).toString(16).padStart(2,"0")).join("");
+}
+function setStyle(el, prop, v) { v ? el.style.setProperty(prop, v) : el.style.removeProperty(prop); }
+function setPx(el, prop, v) { el.style.setProperty(prop, v + "px"); }
+const fieldMap = [
+  ["#insId",    (el,v)=>{ el.id = v; }],
+  ["#insClass", (el,v)=>{ el.className = (v + " __enc_selected").trim(); }],
+  ["#insText",  (el,v)=>{ if (!el.children.length) el.textContent = v; }],
+  ["#insColor", (el,v)=> setStyle(el,"color",v)],
+  ["#insBg",    (el,v)=> setStyle(el,"background-color",v)],
+  ["#insFs",    (el,v)=> v ? setPx(el,"font-size",v) : el.style.removeProperty("font-size")],
+  ["#insGap",   (el,v)=> v ? setPx(el,"gap",v) : el.style.removeProperty("gap")],
+  ["#insPad",   (el,v)=> v ? setPx(el,"padding",v) : el.style.removeProperty("padding")],
+  ["#insRad",   (el,v)=> v ? setPx(el,"border-radius",v) : el.style.removeProperty("border-radius")],
+  ["#insW",     (el,v)=> v ? setPx(el,"width",v) : el.style.removeProperty("width")],
+  ["#insH",     (el,v)=> v ? setPx(el,"height",v) : el.style.removeProperty("height")],
+  ["#insDisp",  (el,v)=> setStyle(el,"display",v)],
+  ["#insJc",    (el,v)=> setStyle(el,"justify-content",v)],
+  ["#insAi",    (el,v)=> setStyle(el,"align-items",v)],
+];
+fieldMap.forEach(([sel, fn]) => $(sel).addEventListener("input", () => {
+  if (!selected) return;
+  fn(selected, $(sel).value);
+}));
+$("#btnDeselect").addEventListener("click", () => {
+  if (selected) selected.classList.remove("__enc_selected");
+  selected = null;
+  $("#inspector").style.display = "none";
+});
+/* 編集結果をHTMLソースに書き戻す */
+$("#btnApplySrc").addEventListener("click", () => {
+  if (!guiDoc) return;
+  const newBody = guiDoc.body.innerHTML;
+  const src = edHtml.value;
+  if (/<body[^>]*>[\s\S]*<\/body>/i.test(src)) {
+    edHtml.value = src.replace(/(<body[^>]*>)[\s\S]*(<\/body>)/i, (m,a,b) => a + "\n" + newBody + "\n" + b);
+  } else {
+    edHtml.value = newBody;
+  }
+  save();
+  exitGui();
+  refresh();
+});
+function exitGui() {
+  guiMode = false;
+  $("#btnGui").classList.remove("on");
+  $("#inspector").style.display = "none";
+  iframe.removeEventListener("load", guiReady);
+  $("#pvMode").textContent = "プレビュー（スクリプト実行あり・サンドボックス）";
+  selected = null; guiDoc = null;
+  refresh();
+}
+
+/* ================= XSS自動検査 ================= */
+const RULES = [
+  { tab:"HTML", sev:"high", re:/on[a-z]+\s*=/i,
+    title:"インラインイベントハンドラ（onXXX=\"...\"）",
+    desc:"HTML属性に直接JSを書くと、今後この箇所に外部データが混ざったときにXSSになる温床。CSPでも防ぎにくい。",
+    fix:"JS側に移して addEventListener で書く。" },
+  { tab:"HTML", sev:"high", re:/(href|src)\s*=\s*["']\s*javascript:/i,
+    title:"javascript: スキームのURL",
+    desc:"javascript: URLは文字列組み立てで悪用される古典的XSS経路。使う理由は基本ない。",
+    fix:"削除する。動作が必要なら click イベントで。" },
+  { tab:"HTML", sev:"high", re:/src\s*=\s*["']data:text\/html/i,
+    title:"data:text/html の埋め込み",
+    desc:"data URIのHTMLはスクリプトを実行でき、オリジン判定も抜けやすい。",
+    fix:"本当に必要か再考する。不要なら削除。" },
+  { tab:"HTML", sev:"low", re:/<script[^>]+src\s*=\s*["']https?:\/\//i,
+    title:"外部スクリプトの読み込み",
+    desc:"外部JSは配信元が侵入されるとそのまま攻撃コードになる（サプライチェーンXSS）。",
+    fix:"出所を確認し、可能なら SRI（integrity属性）を付ける。" },
+  { tab:"HTML", sev:"low", re:/<iframe/i,
+    title:"iframe の使用",
+    desc:"埋め込み先が攻撃者に乗っ取られるとそのまま踏み台になる。",
+    fix:"埋め込み先の信頼性を確認する。不要なものは削除。" },
+  { tab:"JS", sev:"high", re:/\.innerHTML\s*(=|\+=)/,
+    title:"innerHTML への代入",
+    desc:"外部データ（API、URLパラメータ、ユーザー入力、localStorage）が流れ込むとそのままスクリプト実行になる、最も典型的なXSS。",
+    fix:"テキスト表示なら textContent を使う。HTMLを組みたいなら escapeHtml() を通す。" },
+  { tab:"JS", sev:"high", re:/insertAdjacentHTML\s*\(/,
+    title:"insertAdjacentHTML",
+    desc:"innerHTML と同じく生HTMLを注入するので外部データがあればXSSになる。",
+    fix:"escapeHtml() を通すか、DOM API（appendChild + textContent）に置き換える。" },
+  { tab:"JS", sev:"high", re:/document\.write(ln)?\s*\(/,
+    title:"document.write / writeln",
+    desc:"パース中にDOMを破壊する上、外部データを書き込むとXSSになる悪名高いAPI。",
+    fix:"DOM API（textContent / appendChild）に置き換える。" },
+  { tab:"JS", sev:"high", re:/\beval\s*\(|new\s+Function\s*\(/,
+    title:"eval / new Function",
+    desc:"文字列をコードとして実行する。外部データが混ざった時点で任意コード実行。",
+    fix:"JSON.parse や関数テーブル（オブジェクトのマップ）に置き換える。" },
+  { tab:"JS", sev:"mid", re:/set(Timeout|Interval)\s*\(\s*(["'`])/,
+    title:"setTimeout / setInterval の文字列コード",
+    desc:"第一引数に文字列を渡すと内部で eval 相当になる。",
+    fix:"関数を渡す: setTimeout(fn, 1000)" },
+  { tab:"JS", sev:"mid", re:/\.outerHTML\s*(=|\+=)/,
+    title:"outerHTML への代入",
+    desc:"innerHTML と同様に生HTMLの注入になりXSSになり得る。",
+    fix:"textContent か DOM API に置き換える。" },
+  { tab:"JS", sev:"mid", re:/location(\.href)?\s*=\s*[A-Za-z_$]/,
+    title:"変数による location の書き換え",
+    desc:"外部データに javascript:... が入っているとXSS、変なURLならオープンリダイレクトになる。",
+    fix:"URLを https? 決め打ちでバリデーションしてから代入する。" },
+  { tab:"JS", sev:"mid", re:/location\.(search|hash|href)|document\.(URL|documentURI|referrer)|window\.name/,
+    title:"攻撃者が制御できる値の使用",
+    desc:"URLパラメータ・リファラ・window.name は攻撃者が自由に内容を決められる。これをDOMに直接入れるのが実際のXSS事故のほとんど。",
+    fix:"使うなら必ずエスケープする。可能なら URLSearchParams で取得する。" },
+  { tab:"JS", sev:"low", re:/(localStorage|sessionStorage)/,
+    title:"localStorage / sessionStorage の使用",
+    desc:"保存値は他のXSS欠陥経由で汚染されうる。ここから innerHTML などへ直結させないこと。",
+    fix:"取得値も外部データとして扱い、表示時はエスケープする。" },
+];
+const SEV_ORDER = { high: 0, mid: 1, low: 2 };
+const SEV_LABEL = { high: "高危険", mid: "要注意", low: "情報" };
+
+$("#btnScan").addEventListener("click", runScan);
+$("#btnScanClose").addEventListener("click", () => $("#scanPanel").style.display = "none");
+
+function runScan() {
+  const issues = [];
+  const texts = { HTML: edHtml.value, JS: edJs.value };
+  for (const rule of RULES) {
+    const text = texts[rule.tab];
+    if (!text) continue;
+    text.split("\n").forEach((line, i) => {
+      if (/^\s*(\/\/|\/\*|\*|<!--)/.test(line)) return;
+      if (rule.re.test(line)) issues.push({ tab: rule.tab, sev: rule.sev, title: rule.title, desc: rule.desc, fix: rule.fix, line: i + 1 });
+    });
+  }
+  issues.sort((a, b) => SEV_ORDER[a.sev] - SEV_ORDER[b.sev] || a.line - b.line);
+  const n = { high: 0, mid: 0, low: 0 };
+  issues.forEach(x => n[x.sev]++);
+
+  let html = `
+    <div class="summary">
+      <span><b style="color:var(--bad)">${n.high}</b> 高危険</span>
+      <span><b style="color:var(--warn)">${n.mid}</b> 要注意</span>
+      <span><b style="color:var(--ok)">${n.low}</b> 情報</span>
+    </div>`;
+  if (!issues.length) {
+    html += `<div class="clean">✔ 検知なし — 既知の危険パターンは見つかりませんでした</div>`;
+  } else {
+    html += issues.map(x => `
+      <div class="issue">
+        <div class="loc">${x.tab} ${x.line}行目</div>
+        <div class="title"><span class="sev ${x.sev}">${SEV_LABEL[x.sev]}</span>${x.title}</div>
+        <div class="desc">${x.desc}</div>
+        <div class="fix">→ 修正: ${x.fix}</div>
+      </div>`).join("");
+  }
+  html += `
+    <div style="margin-top:14px;color:var(--sub);font-size:12px">対策用テンプレ（コピペ用）:</div>
+    <pre>function escapeHtml(s) {
+  return String(s).replace(/[&amp;&lt;&gt;"']/g, c =&gt; ({
+    "&amp;":"&amp;amp;", "&lt;":"&amp;lt;", "&gt;":"&amp;gt;", '"':"&amp;quot;", "'":"&amp;#39;"
+  })[c]);
+}
+// 危険: el.innerHTML = data.title;
+// 安全: el.innerHTML = escapeHtml(data.title);
+// さらに安全: el.textContent = data.title;</pre>
+    <div style="color:var(--sub);font-size:11px;margin-top:10px">
+      ※ これは静的パターン検査です（誤検知・見逃しはあり得ます）。完全な検証には手動レビューを併用してください。
+    </div>`;
+  $("#scanBody").innerHTML = html;
+  $("#scanPanel").style.display = "flex";
+}
+
+/* ================= エクスポート ================= */
+$("#btnExport").addEventListener("click", () => {
+  const blob = new Blob([buildFullDoc()], { type: "text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "my-site.html";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ================= リセット ================= */
+$("#btnReset").addEventListener("click", () => {
+  if (!confirm("エディタの中身を雛形に戻します。現在の内容は消えます。よろしい？")) return;
+  edHtml.value = TEMPLATE_HTML; edCss.value = TEMPLATE_CSS; edJs.value = TEMPLATE_JS;
+  save(); refresh();
+});
+</script>
+</body>
+</html>
